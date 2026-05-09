@@ -1,0 +1,36 @@
+{
+  "_instructions": [
+    "1. Copy hooks/cam-pre-tool.mjs and hooks/cam-post-tool.mjs to ~/.claude/hooks/",
+    "2. Merge the 'hooks' block below into your existing ~/.claude/settings.json",
+    "3. Start the monitor server: npm start",
+    "4. Open http://localhost:7842/dashboard"
+  ],
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ~/.claude/hooks/cam-pre-tool.mjs"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ~/.claude/hooks/cam-post-tool.mjs"
+          }
+        ]
+      }
+    ]
+  },
+  "_env_vars": {
+    "CAM_URL": "http://localhost:7842",
+    "CAM_DB_PATH": "~/.claude-audit-monitor/audit.db"
+  }
+}

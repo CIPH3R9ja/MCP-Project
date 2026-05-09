@@ -1,0 +1,801 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Claude Audit Monitor</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0f1117;
+      --surface: #1a1d27;
+      --surface2: #242736;
+      --border: #2e3147;
+      --text: #e2e8f0;
+      --text-dim: #8892a4;
+      --accent: #6366f1;
+      --accent-dim: #4338ca;
+      --green: #10b981;
+      --yellow: #f59e0b;
+      --red: #ef4444;
+      --orange: #f97316;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
+      background: var(--bg);
+      color: var(--text);
+      font-size: 13px;
+      min-height: 100vh;
+    }
+
+    /* ── Layout ── */
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 24px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    header h1 { font-size: 15px; font-weight: 600; letter-spacing: 0.3px; }
+    header h1 span { color: var(--accent); }
+
+    #ws-status {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      color: var(--text-dim);
+    }
+    #ws-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--red);
+      transition: background 0.3s;
+    }
+    #ws-dot.connected { background: var(--green); }
+
+    main { padding: 20px 24px; display: flex; flex-direction: column; gap: 20px; }
+
+    /* ── Stats Cards ── */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+      gap: 12px;
+    }
+    .stat-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+    }
+    .stat-card .label { color: var(--text-dim); font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 8px; }
+    .stat-card .value { font-size: 26px; font-weight: 700; line-height: 1; }
+    .stat-card.flagged .value { color: var(--red); }
+    .stat-card.alerts .value { color: var(--orange); }
+    .stat-card.cost .value { color: var(--green); font-size: 20px; }
+
+    /* ── Tabs ── */
+    .tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--border); }
+    .tab {
+      padding: 8px 16px;
+      cursor: pointer;
+      color: var(--text-dim);
+      border-bottom: 2px solid transparent;
+      transition: color 0.15s, border-color 0.15s;
+      font-size: 12px;
+      font-weight: 500;
+    }
+    .tab:hover { color: var(--text); }
+    .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
+    /* ── Table ── */
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    thead th {
+      text-align: left;
+      padding: 8px 12px;
+      color: var(--text-dim);
+      font-weight: 500;
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+    }
+    tbody tr {
+      border-bottom: 1px solid var(--border);
+      transition: background 0.1s;
+    }
+    tbody tr:hover { background: var(--surface2); }
+    tbody td { padding: 8px 12px; vertical-align: middle; }
+    tbody td.mono { font-family: monospace; font-size: 11px; color: var(--text-dim); }
+
+    /* ── Badges ── */
+    .badge {
+      display: inline-block;
+      padding: 2px 7px;
+      border-radius: 4px;
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+    }
+    .badge.low    { background: #0d2a1e; color: var(--green); }
+    .badge.medium { background: #2a1f0d; color: var(--yellow); }
+    .badge.high   { background: #2a160d; color: var(--orange); }
+    .badge.critical { background: #2a0d0d; color: var(--red); }
+    .badge.info   { background: #1a2040; color: #93c5fd; }
+    .badge.warning { background: #2a1f0d; color: var(--yellow); }
+    .badge.pre    { background: #1e1a2a; color: #a78bfa; }
+    .badge.post   { background: #1a2a1e; color: var(--green); }
+    .badge.flagged { background: #2a0d0d; color: var(--red); }
+
+    /* ── Filters ── */
+    .filters {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+    .filters input, .filters select {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      color: var(--text);
+      padding: 5px 10px;
+      font-size: 12px;
+      outline: none;
+    }
+    .filters input:focus, .filters select:focus { border-color: var(--accent); }
+    .filters button {
+      background: var(--accent);
+      border: none;
+      border-radius: 5px;
+      color: #fff;
+      padding: 5px 12px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .filters button:hover { background: var(--accent-dim); }
+    .filters button.secondary {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text-dim);
+    }
+
+    /* ── Risk Bars ── */
+    .risk-bars { display: flex; flex-direction: column; gap: 8px; }
+    .risk-row { display: flex; align-items: center; gap: 10px; }
+    .risk-row .rlabel { width: 60px; font-size: 11px; color: var(--text-dim); text-align: right; }
+    .risk-track { flex: 1; height: 8px; background: var(--surface2); border-radius: 4px; overflow: hidden; }
+    .risk-fill { height: 100%; border-radius: 4px; transition: width 0.4s; }
+    .risk-fill.low    { background: var(--green); }
+    .risk-fill.medium { background: var(--yellow); }
+    .risk-fill.high   { background: var(--orange); }
+    .risk-fill.critical { background: var(--red); }
+    .risk-row .rcount { width: 36px; font-size: 11px; color: var(--text-dim); text-align: right; }
+
+    /* ── Section ── */
+    .section {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+    }
+    .section-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      margin-bottom: 14px;
+    }
+
+    .two-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+    @media (max-width: 700px) { .two-col { grid-template-columns: 1fr; } }
+
+    /* ── Rule toggles ── */
+    .rule-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .rule-row:last-child { border-bottom: none; }
+    .rule-info .rname { font-size: 12px; font-weight: 500; }
+    .rule-info .rdesc { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
+    .rule-meta { display: flex; align-items: center; gap: 10px; }
+
+    .toggle {
+      position: relative; width: 36px; height: 20px; cursor: pointer;
+    }
+    .toggle input { opacity: 0; width: 0; height: 0; }
+    .toggle-track {
+      position: absolute; inset: 0;
+      background: var(--surface2);
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      transition: background 0.2s;
+    }
+    .toggle input:checked ~ .toggle-track { background: var(--accent); border-color: var(--accent); }
+    .toggle-thumb {
+      position: absolute;
+      top: 3px; left: 3px;
+      width: 14px; height: 14px;
+      background: #fff;
+      border-radius: 50%;
+      transition: transform 0.2s;
+    }
+    .toggle input:checked ~ .toggle-thumb { transform: translateX(16px); }
+
+    /* ── Event Detail Modal ── */
+    #modal-overlay {
+      display: none;
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,0.7);
+      z-index: 200;
+      align-items: center;
+      justify-content: center;
+    }
+    #modal-overlay.open { display: flex; }
+    #modal {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      width: min(680px, 95vw);
+      max-height: 85vh;
+      overflow-y: auto;
+      padding: 24px;
+    }
+    #modal h2 { font-size: 14px; margin-bottom: 16px; }
+    #modal .close-btn {
+      float: right;
+      background: none;
+      border: none;
+      color: var(--text-dim);
+      font-size: 18px;
+      cursor: pointer;
+      line-height: 1;
+    }
+    #modal pre {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 12px;
+      font-size: 11px;
+      overflow-x: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+      max-height: 300px;
+      overflow-y: auto;
+    }
+    #modal .field { margin-bottom: 14px; }
+    #modal .field label { display: block; font-size: 11px; color: var(--text-dim); margin-bottom: 4px; }
+
+    /* ── Top tools chart ── */
+    .bar-chart { display: flex; flex-direction: column; gap: 6px; }
+    .bar-item { display: flex; align-items: center; gap: 8px; }
+    .bar-name { width: 120px; font-size: 11px; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; }
+    .bar-track { flex: 1; height: 14px; background: var(--surface2); border-radius: 3px; overflow: hidden; }
+    .bar-fill { height: 100%; background: var(--accent); border-radius: 3px; transition: width 0.4s; }
+    .bar-count { width: 36px; font-size: 11px; color: var(--text-dim); }
+
+    /* ── Live feed ── */
+    #live-feed {
+      max-height: 260px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .feed-item {
+      display: flex;
+      gap: 8px;
+      align-items: flex-start;
+      padding: 6px 8px;
+      border-radius: 5px;
+      font-size: 11px;
+      animation: fadeIn 0.3s;
+    }
+    .feed-item.alert-item { background: rgba(239,68,68,0.08); }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+    .feed-time { color: var(--text-dim); white-space: nowrap; font-family: monospace; }
+    .feed-msg { color: var(--text); }
+
+    /* ── Pagination ── */
+    .pagination { display: flex; gap: 8px; align-items: center; margin-top: 12px; }
+    .pagination button {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--text);
+      padding: 4px 10px;
+      font-size: 11px;
+      cursor: pointer;
+    }
+    .pagination button:disabled { opacity: 0.4; cursor: default; }
+    .pagination span { font-size: 11px; color: var(--text-dim); }
+
+    .empty { color: var(--text-dim); text-align: center; padding: 32px; font-size: 12px; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>Claude <span>Audit</span> Monitor</h1>
+  <div id="ws-status">
+    <div id="ws-dot"></div>
+    <span id="ws-label">Connecting…</span>
+  </div>
+</header>
+
+<main>
+  <!-- Stats Row -->
+  <div class="stats-grid" id="stats-grid">
+    <div class="stat-card"><div class="label">Total Events</div><div class="value" id="s-events">—</div></div>
+    <div class="stat-card"><div class="label">Sessions</div><div class="value" id="s-sessions">—</div></div>
+    <div class="stat-card alerts"><div class="label">Alerts</div><div class="value" id="s-alerts">—</div></div>
+    <div class="stat-card flagged"><div class="label">Flagged</div><div class="value" id="s-flagged">—</div></div>
+    <div class="stat-card cost"><div class="label">Total Cost</div><div class="value" id="s-cost">—</div></div>
+    <div class="stat-card"><div class="label">Last Hour</div><div class="value" id="s-hour">—</div></div>
+  </div>
+
+  <!-- Two-column: risk breakdown + top tools -->
+  <div class="two-col">
+    <div class="section">
+      <div class="section-title">Risk Breakdown</div>
+      <div class="risk-bars">
+        <div class="risk-row"><span class="rlabel">Critical</span><div class="risk-track"><div class="risk-fill critical" id="rb-critical" style="width:0%"></div></div><span class="rcount" id="rc-critical">0</span></div>
+        <div class="risk-row"><span class="rlabel">High</span><div class="risk-track"><div class="risk-fill high" id="rb-high" style="width:0%"></div></div><span class="rcount" id="rc-high">0</span></div>
+        <div class="risk-row"><span class="rlabel">Medium</span><div class="risk-track"><div class="risk-fill medium" id="rb-medium" style="width:0%"></div></div><span class="rcount" id="rc-medium">0</span></div>
+        <div class="risk-row"><span class="rlabel">Low</span><div class="risk-track"><div class="risk-fill low" id="rb-low" style="width:0%"></div></div><span class="rcount" id="rc-low">0</span></div>
+      </div>
+    </div>
+    <div class="section">
+      <div class="section-title">Top Tools</div>
+      <div class="bar-chart" id="top-tools"></div>
+    </div>
+  </div>
+
+  <!-- Live Feed + Tabs -->
+  <div class="section">
+    <div class="section-title">Live Feed</div>
+    <div id="live-feed"><div class="empty">Waiting for events…</div></div>
+  </div>
+
+  <!-- Tabs -->
+  <div>
+    <div class="tabs">
+      <div class="tab active" data-tab="events">Events</div>
+      <div class="tab" data-tab="alerts">Alerts</div>
+      <div class="tab" data-tab="sessions">Sessions</div>
+      <div class="tab" data-tab="rules">Rules</div>
+    </div>
+
+    <!-- Events Tab -->
+    <div class="tab-panel active" id="tab-events" style="margin-top:14px">
+      <div class="filters">
+        <input id="f-tool" placeholder="Tool name" style="width:140px" />
+        <input id="f-session" placeholder="Session ID" style="width:200px" />
+        <select id="f-flagged">
+          <option value="">All</option>
+          <option value="true">Flagged only</option>
+          <option value="false">Clean only</option>
+        </select>
+        <button onclick="loadEvents(true)">Filter</button>
+        <button class="secondary" onclick="clearFilters()">Clear</button>
+        <button class="secondary" onclick="exportData('json')" style="margin-left:auto">Export JSON</button>
+        <button class="secondary" onclick="exportData('csv')">Export CSV</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Phase</th>
+              <th>Tool</th>
+              <th>Session</th>
+              <th>MCP Server</th>
+              <th>Risk</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="events-tbody"></tbody>
+        </table>
+      </div>
+      <div class="pagination">
+        <button id="prev-btn" onclick="prevPage()" disabled>← Prev</button>
+        <span id="page-info">Page 1</span>
+        <button id="next-btn" onclick="nextPage()">Next →</button>
+      </div>
+    </div>
+
+    <!-- Alerts Tab -->
+    <div class="tab-panel" id="tab-alerts" style="margin-top:14px">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Severity</th>
+              <th>Rule</th>
+              <th>Session</th>
+              <th>Message</th>
+            </tr>
+          </thead>
+          <tbody id="alerts-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Sessions Tab -->
+    <div class="tab-panel" id="tab-sessions" style="margin-top:14px">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Session ID</th>
+              <th>Started</th>
+              <th>Last Seen</th>
+              <th>Events</th>
+              <th>Flagged</th>
+              <th>Risk Score</th>
+              <th>Cost</th>
+              <th>CWD</th>
+            </tr>
+          </thead>
+          <tbody id="sessions-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Rules Tab -->
+    <div class="tab-panel" id="tab-rules" style="margin-top:14px">
+      <div id="rules-list"></div>
+    </div>
+  </div>
+</main>
+
+<!-- Event Detail Modal -->
+<div id="modal-overlay" onclick="closeModal(event)">
+  <div id="modal">
+    <button class="close-btn" onclick="closeModal()">✕</button>
+    <h2>Event Detail</h2>
+    <div id="modal-content"></div>
+  </div>
+</div>
+
+<script>
+const BASE = window.location.origin;
+const WS_URL = `ws://${window.location.host}`;
+
+let currentPage = 0;
+const PAGE_SIZE = 50;
+let totalEvents = 0;
+
+// ── WebSocket ──────────────────────────────────────────────────────────────
+let ws;
+let wsRetryDelay = 1000;
+
+function connectWS() {
+  ws = new WebSocket(WS_URL);
+
+  ws.onopen = () => {
+    document.getElementById('ws-dot').className = 'connected';
+    document.getElementById('ws-label').textContent = 'Live';
+    wsRetryDelay = 1000;
+  };
+
+  ws.onclose = () => {
+    document.getElementById('ws-dot').className = '';
+    document.getElementById('ws-label').textContent = 'Reconnecting…';
+    setTimeout(connectWS, wsRetryDelay);
+    wsRetryDelay = Math.min(wsRetryDelay * 2, 30000);
+  };
+
+  ws.onmessage = ({ data }) => {
+    const msg = JSON.parse(data);
+    if (msg.type === 'stats') renderStats(msg.data);
+    else if (msg.type === 'event') onLiveEvent(msg.data);
+    else if (msg.type === 'alert') onLiveAlert(msg.data);
+  };
+}
+
+// ── Stats ──────────────────────────────────────────────────────────────────
+function renderStats(s) {
+  document.getElementById('s-events').textContent = s.total_events.toLocaleString();
+  document.getElementById('s-sessions').textContent = s.total_sessions.toLocaleString();
+  document.getElementById('s-alerts').textContent = s.total_alerts.toLocaleString();
+  document.getElementById('s-flagged').textContent = s.flagged_events.toLocaleString();
+  document.getElementById('s-cost').textContent = '$' + (s.total_cost_usd || 0).toFixed(4);
+  document.getElementById('s-hour').textContent = s.events_last_hour.toLocaleString();
+
+  const rb = s.risk_breakdown || {};
+  const maxRisk = Math.max(rb.low||0, rb.medium||0, rb.high||0, rb.critical||0, 1);
+  ['low','medium','high','critical'].forEach(k => {
+    const v = rb[k] || 0;
+    document.getElementById(`rb-${k}`).style.width = (v / maxRisk * 100) + '%';
+    document.getElementById(`rc-${k}`).textContent = v;
+  });
+
+  const tt = document.getElementById('top-tools');
+  const tools = s.top_tools || [];
+  if (!tools.length) { tt.innerHTML = '<div class="empty">No data yet</div>'; return; }
+  const maxC = Math.max(...tools.map(t => t.count), 1);
+  tt.innerHTML = tools.map(t => `
+    <div class="bar-item">
+      <span class="bar-name" title="${t.tool}">${t.tool}</span>
+      <div class="bar-track"><div class="bar-fill" style="width:${t.count/maxC*100}%"></div></div>
+      <span class="bar-count">${t.count}</span>
+    </div>`).join('');
+}
+
+// ── Live Feed ──────────────────────────────────────────────────────────────
+function onLiveEvent(event) {
+  addFeedItem({
+    time: new Date(event.timestamp),
+    msg: `${event.phase === 'pre' ? '→' : '←'} ${event.tool_name}` +
+         (event.flagged ? ' ⚠ flagged' : ''),
+    isAlert: event.flagged,
+  });
+}
+
+function onLiveAlert(alert) {
+  addFeedItem({
+    time: new Date(alert.timestamp),
+    msg: `[${alert.severity.toUpperCase()}] ${alert.rule_name}: ${alert.message.slice(0, 80)}`,
+    isAlert: true,
+  });
+}
+
+function addFeedItem({ time, msg, isAlert }) {
+  const feed = document.getElementById('live-feed');
+  const empty = feed.querySelector('.empty');
+  if (empty) empty.remove();
+
+  const el = document.createElement('div');
+  el.className = 'feed-item' + (isAlert ? ' alert-item' : '');
+  el.innerHTML = `<span class="feed-time">${time.toLocaleTimeString()}</span><span class="feed-msg">${escHtml(msg)}</span>`;
+  feed.insertBefore(el, feed.firstChild);
+
+  // Keep feed bounded
+  while (feed.children.length > 60) feed.removeChild(feed.lastChild);
+}
+
+// ── Events ─────────────────────────────────────────────────────────────────
+async function loadEvents(resetPage = false) {
+  if (resetPage) currentPage = 0;
+  const tool = document.getElementById('f-tool').value.trim();
+  const session = document.getElementById('f-session').value.trim();
+  const flagged = document.getElementById('f-flagged').value;
+
+  const params = new URLSearchParams({
+    limit: PAGE_SIZE,
+    offset: currentPage * PAGE_SIZE,
+  });
+  if (tool) params.set('tool_name', tool);
+  if (session) params.set('session_id', session);
+  if (flagged) params.set('flagged', flagged);
+
+  const res = await fetch(`${BASE}/api/events?${params}`);
+  const events = await res.json();
+
+  const tbody = document.getElementById('events-tbody');
+  if (!events.length) {
+    tbody.innerHTML = '<tr><td colspan="7" class="empty">No events found</td></tr>';
+  } else {
+    tbody.innerHTML = events.map(e => `
+      <tr style="cursor:pointer" onclick="showEvent('${e.id}')">
+        <td class="mono">${fmtTime(e.timestamp)}</td>
+        <td><span class="badge ${e.phase}">${e.phase}</span></td>
+        <td><strong>${escHtml(e.tool_name)}</strong></td>
+        <td class="mono">${e.session_id.slice(0, 12)}…</td>
+        <td class="mono">${e.mcp_server ?? '—'}</td>
+        <td>${e.intent ? `<span class="badge ${e.intent.risk_level}">${e.intent.risk_level}</span>` : '—'}</td>
+        <td>${e.flagged ? '<span class="badge flagged">Flagged</span>' : '<span class="badge low">Clean</span>'}</td>
+      </tr>`).join('');
+  }
+
+  totalEvents = events.length;
+  document.getElementById('page-info').textContent = `Page ${currentPage + 1}`;
+  document.getElementById('prev-btn').disabled = currentPage === 0;
+  document.getElementById('next-btn').disabled = events.length < PAGE_SIZE;
+}
+
+function prevPage() { if (currentPage > 0) { currentPage--; loadEvents(); } }
+function nextPage() { currentPage++; loadEvents(); }
+
+function clearFilters() {
+  document.getElementById('f-tool').value = '';
+  document.getElementById('f-session').value = '';
+  document.getElementById('f-flagged').value = '';
+  loadEvents(true);
+}
+
+// ── Alerts ─────────────────────────────────────────────────────────────────
+async function loadAlerts() {
+  const res = await fetch(`${BASE}/api/alerts`);
+  const alerts = await res.json();
+  const tbody = document.getElementById('alerts-tbody');
+  if (!alerts.length) {
+    tbody.innerHTML = '<tr><td colspan="5" class="empty">No alerts yet</td></tr>';
+    return;
+  }
+  tbody.innerHTML = alerts.map(a => `
+    <tr>
+      <td class="mono">${fmtTime(a.timestamp)}</td>
+      <td><span class="badge ${a.severity}">${a.severity}</span></td>
+      <td>${escHtml(a.rule_name)}</td>
+      <td class="mono">${a.session_id.slice(0, 12)}…</td>
+      <td style="max-width:360px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(a.message)}">${escHtml(a.message)}</td>
+    </tr>`).join('');
+}
+
+// ── Sessions ───────────────────────────────────────────────────────────────
+async function loadSessions() {
+  const res = await fetch(`${BASE}/api/sessions`);
+  const sessions = await res.json();
+  const tbody = document.getElementById('sessions-tbody');
+  if (!sessions.length) {
+    tbody.innerHTML = '<tr><td colspan="8" class="empty">No sessions yet</td></tr>';
+    return;
+  }
+  tbody.innerHTML = sessions.map(s => `
+    <tr>
+      <td class="mono">${s.id.slice(0, 16)}…</td>
+      <td class="mono">${fmtTime(s.started_at)}</td>
+      <td class="mono">${fmtTime(s.last_seen_at)}</td>
+      <td>${s.event_count}</td>
+      <td>${s.flagged_events > 0 ? `<span class="badge flagged">${s.flagged_events}</span>` : '0'}</td>
+      <td>${riskBar(s.risk_score)}</td>
+      <td>$${(s.total_cost_usd||0).toFixed(4)}</td>
+      <td class="mono" style="max-width:160px;overflow:hidden;text-overflow:ellipsis" title="${escHtml(s.cwd||'')}">
+        ${escHtml(s.cwd || '—')}
+      </td>
+    </tr>`).join('');
+}
+
+function riskBar(score) {
+  const pct = Math.round((score || 0) * 100);
+  const cls = pct >= 80 ? 'critical' : pct >= 60 ? 'high' : pct >= 30 ? 'medium' : 'low';
+  return `<div style="display:flex;align-items:center;gap:6px">
+    <div style="width:60px;height:6px;background:var(--surface2);border-radius:3px;overflow:hidden">
+      <div style="width:${pct}%;height:100%;background:var(--${cls === 'low' ? 'green' : cls === 'medium' ? 'yellow' : cls === 'high' ? 'orange' : 'red'});border-radius:3px"></div>
+    </div>
+    <span style="font-size:10px;color:var(--text-dim)">${pct}%</span>
+  </div>`;
+}
+
+// ── Rules ──────────────────────────────────────────────────────────────────
+async function loadRules() {
+  const res = await fetch(`${BASE}/api/rules`);
+  const rules = await res.json();
+  const container = document.getElementById('rules-list');
+  container.innerHTML = rules.map(r => `
+    <div class="rule-row">
+      <div class="rule-info">
+        <div class="rname">${escHtml(r.name)}</div>
+        <div class="rdesc">${escHtml(r.description || '')}</div>
+      </div>
+      <div class="rule-meta">
+        <span class="badge ${r.severity}">${r.severity}</span>
+        <span class="badge ${r.action === 'block' ? 'critical' : r.action === 'notify' ? 'warning' : 'info'}">${r.action}</span>
+        <label class="toggle">
+          <input type="checkbox" ${r.enabled ? 'checked' : ''} onchange="toggleRule('${r.id}', this.checked)" />
+          <div class="toggle-track"></div>
+          <div class="toggle-thumb"></div>
+        </label>
+      </div>
+    </div>`).join('');
+}
+
+async function toggleRule(id, enabled) {
+  await fetch(`${BASE}/api/rules/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled }),
+  });
+}
+
+// ── Event Detail ───────────────────────────────────────────────────────────
+async function showEvent(id) {
+  const res = await fetch(`${BASE}/api/events/${id}`);
+  const e = await res.json();
+
+  const intent = e.intent ? `
+    <div class="field">
+      <label>Intent Analysis</label>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:4px">
+        <div><span class="badge ${e.intent.risk_level}">${e.intent.risk_level}</span> &nbsp;<span style="color:var(--text-dim)">${escHtml(e.intent.category)}</span></div>
+        <div></div>
+      </div>
+      <p style="margin-top:8px;font-size:12px">${escHtml(e.intent.summary)}</p>
+      ${e.intent.risk_reasons.length ? `<ul style="margin-top:6px;padding-left:16px;font-size:11px;color:var(--text-dim)">${e.intent.risk_reasons.map(r=>`<li>${escHtml(r)}</li>`).join('')}</ul>` : ''}
+    </div>` : '';
+
+  const nhis = e.identities?.length ? `
+    <div class="field">
+      <label>Detected Credentials</label>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px">
+        ${e.identities.map(i => `<span class="badge critical">${escHtml(i.service)} ${i.type} &nbsp; ${escHtml(i.masked_value||'')}</span>`).join('')}
+      </div>
+    </div>` : '';
+
+  document.getElementById('modal-content').innerHTML = `
+    <div class="field"><label>ID</label><code style="font-size:11px">${e.id}</code></div>
+    <div class="field"><label>Tool</label><strong>${escHtml(e.tool_name)}</strong> &nbsp; <span class="badge ${e.phase}">${e.phase}</span> &nbsp; ${e.mcp_server ? `<span class="badge info">${escHtml(e.mcp_server)}</span>` : ''}</div>
+    <div class="field"><label>Session</label><code style="font-size:11px">${e.session_id}</code></div>
+    <div class="field"><label>Time</label>${new Date(e.timestamp).toLocaleString()}</div>
+    ${e.flagged ? `<div class="field"><label>Flag Reason</label><span class="badge flagged">${escHtml(e.flag_reason||'flagged')}</span></div>` : ''}
+    ${intent}
+    ${nhis}
+    <div class="field"><label>Tool Input</label><pre>${escHtml(JSON.stringify(e.tool_input, null, 2))}</pre></div>
+    ${e.tool_response ? `<div class="field"><label>Tool Response</label><pre>${escHtml(JSON.stringify(e.tool_response, null, 2))}</pre></div>` : ''}
+  `;
+  document.getElementById('modal-overlay').classList.add('open');
+}
+
+function closeModal(e) {
+  if (!e || e.target === document.getElementById('modal-overlay') || e.target.classList.contains('close-btn')) {
+    document.getElementById('modal-overlay').classList.remove('open');
+  }
+}
+
+// ── Tabs ───────────────────────────────────────────────────────────────────
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    tab.classList.add('active');
+    const panel = document.getElementById('tab-' + tab.dataset.tab);
+    panel.classList.add('active');
+    if (tab.dataset.tab === 'events') loadEvents();
+    else if (tab.dataset.tab === 'alerts') loadAlerts();
+    else if (tab.dataset.tab === 'sessions') loadSessions();
+    else if (tab.dataset.tab === 'rules') loadRules();
+  });
+});
+
+// ── Export ─────────────────────────────────────────────────────────────────
+function exportData(format) {
+  window.open(`${BASE}/api/export?format=${format}`, '_blank');
+}
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+function fmtTime(ts) {
+  const d = new Date(ts);
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+function escHtml(str) {
+  return String(str ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+// ── Init ───────────────────────────────────────────────────────────────────
+connectWS();
+loadEvents();
+
+// Poll stats every 15s as fallback
+setInterval(async () => {
+  const res = await fetch(`${BASE}/api/stats`);
+  renderStats(await res.json());
+}, 15000);
+</script>
+</body>
+</html>
